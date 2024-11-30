@@ -6,6 +6,9 @@ authors = ["Coursant <24210240198@fudan.edu.cn>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+num-traits = "0.2.19"
+intervals = "2.1"
+
 #lazy_static = "1.4"
 rustc_version = "0.4.0"
 cargo_metadata = "0.14.1"

@@ -1,6 +1,9 @@
 pub mod domain;
 pub mod ConstraintGraph;
+pub mod range;
+use ConstraintGraph::ConstraintGraph;
 use rustc_hir::def::DefKind;
+use rustc_hir::def_id::DefId;
 use rustc_middle::bug;
 use rustc_middle::mir::interpret::{InterpResult, Scalar};
 use rustc_middle::mir::visit::{MutVisitor, PlaceContext, Visitor};
@@ -8,26 +11,33 @@ use rustc_middle::mir::*;
 use rustc_middle::ty::layout::{HasParamEnv, LayoutOf};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_middle::mir::LocalDecls;
-pub struct IntervalAnalysis{
+pub struct IntervalAnalysis<'tcx>{
 
 
         map: Map,
         tcx: TyCtxt<'tcx>,
-        local_decls: &'a LocalDecls<'tcx>,
+        body: &'tcx Body<'tcx>,
+        local_decls: &'tcx LocalDecls<'tcx>,
+        def_id: DefId,
+        graph: ConstraintGraph,
         // ecx: InterpCx<'tcx, DummyMachine>,
         // param_env: ty::ParamEnv<'tcx>,
     
     
 }
-impl<'a, 'tcx> IntervalAnalysis<'a, 'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, body: &'a Body<'tcx>, map: Map) -> Self {
-        let param_env = tcx.param_env_reveal_all_normalized(body.source.def_id());
+impl<'tcx> IntervalAnalysis<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId) -> Self {
+        let body = tcx.optimized_mir(def_id);
         Self {
             map,
             tcx,
+            body: body,
             local_decls: &body.local_decls,
-            ecx: InterpCx::new(tcx, DUMMY_SP, param_env, DummyMachine),
-            param_env: param_env,
+            def_id,
+            graph: ConstraintGraph::new(def_id, body.arg_count, body.local_decls.len()),
+
         }
     }
+
+
 }
