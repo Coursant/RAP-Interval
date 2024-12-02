@@ -7,12 +7,12 @@ pub struct ConstraintGraph {
     oprs: GenOprs,  // The operations of the source program
 
     // Private fields
-    func: Option<Function>,             // Save the last Function analyzed
-    def_map: DefMap,                    // Map from variables to the operations that define them
-    use_map: UseMap,                    // Map from variables to operations where variables are used
-    symb_map: SymbMap, // Map from variables to operations where they appear as bounds
-    values_branch_map: ValuesBranchMap, // Store intervals, basic blocks, and branches
-    values_switch_map: ValuesSwitchMap, // Store intervals for switch branches
+    // func: Option<Function>,             // Save the last Function analyzed
+    defmap: DefMap,                    // Map from variables to the operations that define them
+    usemap: UseMap,                    // Map from variables to operations where variables are used
+    symbmap: SymbMap, // Map from variables to operations where they appear as bounds
+    values_branchmap: ValuesBranchMap, // Store intervals, basic blocks, and branches
+    values_switchmap: ValuesSwitchMap, // Store intervals for switch branches
     constant_vector: Vec<APInt>, // Vector for constants from an SCC
 }
 
@@ -21,17 +21,17 @@ impl ConstraintGraph {
         Self {
             vars: VarNodes::new(),
             oprs: GenOprs::new(),
-            func: None,
-            def_map: DefMap::new(),
-            use_map: UseMap::new(),
-            symb_map: SymbMap::new(),
-            values_branch_map: ValuesBranchMap::new(),
-            values_switch_map: ValuesSwitchMap::new(),
+            // func: None,
+            defmap: DefMap::new(),
+            usemap: UseMap::new(),
+            symbmap: SymbMap::new(),
+            values_branchmap: ValuesBranchMap::new(),
+            values_switchmap: ValuesSwitchMap::new(),
             constant_vector: Vec::new(),
         }
     }
 
-    pub fn add_var_node(&mut self, v: &Value) -> VarNode {
+    pub fn add_varnode(&mut self, v: &Value) -> VarNode {
         // Adds a VarNode to the graph
     }
 
@@ -39,12 +39,12 @@ impl ConstraintGraph {
         &self.oprs
     }
 
-    pub fn get_def_map(&self) -> &DefMap {
-        &self.def_map
+    pub fn get_defmap(&self) -> &DefMap {
+        &self.defmap
     }
 
-    pub fn get_use_map(&self) -> &UseMap {
-        &self.use_map
+    pub fn get_usemap(&self) -> &UseMap {
+        &self.usemap
     }
 
     pub fn add_unary_op(&mut self, i: &Instruction) {
@@ -64,7 +64,7 @@ impl ConstraintGraph {
         }
         graph
     }
-    pub fn build_var_nodes(&mut self) {
+    pub fn build_varnodes(&mut self) {
         // Builds VarNodes
     }
 
@@ -72,7 +72,7 @@ impl ConstraintGraph {
         // Builds symbolic intersect map
     }
 
-    pub fn build_use_map(&self, component: &SmallPtrSet<VarNode, 32>) -> UseMap {
+    pub fn build_usemap(&self, component: &SmallPtrSet<VarNode, 32>) -> UseMap {
         // Builds the use map for a component
     }
 
@@ -134,8 +134,4 @@ impl ConstraintGraph {
     }
 }
 
-impl Drop for ConstraintGraph {
-    fn drop(&mut self) {
-        // Destructor logic
-    }
-}
+pub struct Nu
