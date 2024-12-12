@@ -13,7 +13,7 @@ enum RangeType {
     Regular,
     Empty,
 }
-
+#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
 pub struct Range<T>
 where
     T: bounds::Bound + Num + Bounded,
@@ -27,14 +27,14 @@ where
     T: bounds::Bound + Num + Bounded,
 {
     // Default constructor
-    pub fn new() -> Self {
+    pub fn new(value: T) -> Self {
         Self {
             rtype: RangeType::Regular,
             range: Interval::new_unchecked(T::min_value(), T::max_value()),
         }
     }
     pub fn default() -> Self {
-        Self::new()
+        Self::new(T::zero())
     }
     // Parameterized constructor
     pub fn with_bounds(lb: T, ub: T, rtype: RangeType) -> Self {
