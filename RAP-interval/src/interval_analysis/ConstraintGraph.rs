@@ -1,7 +1,7 @@
 use super::{domain::*, range::Range};
 
 use rustc_middle::{mir::*, ty::*};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct ConstraintGraph<'tcx> {
     // Protected fields
@@ -35,6 +35,11 @@ impl ConstraintGraph {
 
     pub fn add_varnode(&mut self, v: &Place) -> VarNode {
         // Adds a VarNode to the graph
+        let node = VarNode::new(v);
+        self.vars.insert(v, &node);
+        let uselist: HashSet<BasicOp> = HashSet::new();
+        self.usemap.insert(v, &uselist)
+
     }
 
     pub fn get_oprs(&self) -> &GenOprs {
@@ -138,20 +143,7 @@ impl ConstraintGraph {
             }
         }
     }
-    /// 从操作数中提取常量值
-    fn extract_constant<'tcx>(&self, operand: Operand<'tcx>, tcx: TyCtxt<'tcx>) -> Option<i128> {
-        if let Operand::Constant(c) = operand {
-            if let rustc_middle::mir::ConstantKind::Val(val, _) = c.literal {
-                if let rustc_middle::ty::ConstKind::Value(value, _) = val {
-                    if let Some(i) = value.try_to_bits(tcx.layout_of(tcx.types.i128).unwrap().size)
-                    {
-                        return Some(i as i128);
-                    }
-                }
-            }
-        }
-        None
-    }
+
     fn extract_condition<'tcx>(
         &self,
         place: &Place<'tcx>,
@@ -183,6 +175,7 @@ impl ConstraintGraph {
             (Some(c1), Some(c2)) => {}
             (Some(c), None) | (None, Some(c)) => {
                 // 单变量与常量比较
+                self.add_varnode(c.place());
                 let variable_range = Range::new(UserType::new()); //使用userType
                 let true_range = self.apply_comparison(c, variable_range, cmp_op, true);
                 let false_range = self.apply_comparison(c, variable_range, cmp_op, false);
@@ -190,6 +183,8 @@ impl ConstraintGraph {
             }
             (None, None) => {
                 // 两个变量之间的比较
+                self.add_varnode(op1.place());
+                self.add_varnode(op2.place());
                 let variable_range1 = Range::new(UserType::new()); //使用userType
                 let variable_range2 = Range::new(UserType::new()); //使用userType
                 let true_range =

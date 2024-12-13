@@ -28,14 +28,14 @@ pub trait Operation {
 
 // Define the BasicOp struct
 pub struct BasicOp<'tcx> {
-    pub intersect: Option<BasicInterval>, // The range associated with the operation
-    pub sink: VarNode<'tcx>,              // The target node storing the result
+    pub intersect: Option<&'tcx BasicInterval>, // The range associated with the operation
+    pub sink: & 'tcx VarNode<'tcx>,              // The target node storing the result
     pub inst: Option<Instruction>,        // The instruction that originated this operation
 }
 
 impl<'tcx> BasicOp<'tcx> {
     // Constructor for creating a new BasicOp
-    pub fn new(intersect: Option<BasicInterval>, sink: VarNode, inst: Option<Instruction>) -> Self {
+    pub fn new(intersect: Option<BasicInterval>, sink: &VarNode, inst: Option<Instruction>) -> Self {
         BasicOp {
             intersect,
             sink,
@@ -86,16 +86,16 @@ impl<'tcx> Operation for BasicOp<'tcx> {
     }
 }
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
-pub struct VarNode<'tcx> {
+pub struct VarNode<'tcx,T> {
     // The program variable which is represented.
-    v: &'tcx LocalDecl<'tcx>,
+    v: &'tcx Place<'tcx>,
     // A Range associated to the variable.
-    interval: Range<i32>,
+    interval: Range<T>,
     // Used by the crop meet operator.
     abstract_state: char,
 }
-impl<'tcx> VarNode<'tcx> {
-    pub fn new(v: &LocalDecl) -> Self {
+impl<'tcx,T> VarNode<'tcx,T> {
+    pub fn new(v: &Place) -> Self {
         Self {
             v,
             interval: Range::default(),
@@ -161,6 +161,7 @@ impl<'tcx> VarNode<'tcx> {
         // Implementation of storing the abstract state.
     }
 }
+
 pub type VarNodes<'tcx> = HashMap<&'tcx Place<'tcx>, &'tcx VarNode<'tcx>>;
 pub type GenOprs<'tcx> = HashSet<&'tcx BasicOp<'tcx>>;
 pub type UseMap<'tcx> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx>>>;

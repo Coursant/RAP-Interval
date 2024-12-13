@@ -21,12 +21,20 @@ where
     pub rtype: RangeType,
     pub range: Interval<T, T>,
 }
-
+#[derive(Num, Bounded, Debug, PartialEq, Eq, Hash, Copy, Clone)]
+enum UserType {
+    Unknown,
+    i32(i32),
+    Empty,
+}
 impl<T> Range<T>
 where
     T: bounds::Bound + Num + Bounded,
 {
     // Default constructor
+    fn test () {
+        
+    }
     pub fn new(value: T) -> Self {
         Self {
             rtype: RangeType::Regular,
@@ -42,6 +50,7 @@ where
             rtype,
             range: Interval::new_unchecked(lb, ub),
         }
+
     }
 
     // Getter for lower bound
