@@ -4,6 +4,7 @@ pub mod ConstraintGraph;
 pub mod domain;
 pub mod range;
 pub mod interval_test;
+
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::bug;

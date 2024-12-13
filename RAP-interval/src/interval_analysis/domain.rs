@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::interval_analysis::range::Range;
 
-pub struct BasicInterval {
-    pub range: Option<Range<i32>>,
+pub struct BasicInterval<T> {
+    pub range: Option<Range<T>>,
 }
 
 pub struct Instruction {
@@ -13,7 +13,7 @@ pub struct Instruction {
 
 // Define a Range struct for intervals
 
-impl BasicInterval {
+impl <T>BasicInterval<T> {
     pub fn set_range(&mut self, new_range: Range) {
         self.range = Some(new_range);
     }
@@ -27,13 +27,13 @@ pub trait Operation {
 }
 
 // Define the BasicOp struct
-pub struct BasicOp<'tcx> {
+pub struct BasicOp<'tcx,T> {
     pub intersect: Option<&'tcx BasicInterval>, // The range associated with the operation
-    pub sink: & 'tcx VarNode<'tcx>,              // The target node storing the result
+    pub sink: & 'tcx VarNode<'tcx, T>,              // The target node storing the result
     pub inst: Option<Instruction>,        // The instruction that originated this operation
 }
 
-impl<'tcx> BasicOp<'tcx> {
+impl<'tcx,T> BasicOp<'tcx,T> {
     // Constructor for creating a new BasicOp
     pub fn new(intersect: Option<BasicInterval>, sink: &VarNode, inst: Option<Instruction>) -> Self {
         BasicOp {
@@ -162,10 +162,10 @@ impl<'tcx,T> VarNode<'tcx,T> {
     }
 }
 
-pub type VarNodes<'tcx> = HashMap<&'tcx Place<'tcx>, &'tcx VarNode<'tcx>>;
-pub type GenOprs<'tcx> = HashSet<&'tcx BasicOp<'tcx>>;
-pub type UseMap<'tcx> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx>>>;
-pub type SymbMap<'tcx> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx>>>;
-pub type DefMap<'tcx> = HashMap<&'tcx Place<'tcx>, &'tcx BasicOp<'tcx>>;
-pub type ValuesBranchMap<'tcx> = HashMap<&'tcx Place<'tcx>, ValueBranchMap<'tcx>>;
-pub type ValuesSwitchMap<'tcx> = HashMap<&'tcx Place<'tcx>, ValueSwitchMap<'tcx>>;
+pub type VarNodes<'tcx, T> = HashMap<&'tcx Place<'tcx>, &'tcx VarNode<'tcx, T>>;
+pub type GenOprs<'tcx, T> = HashSet<&'tcx BasicOp<'tcx, T>>;
+pub type UseMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx, T>>>;
+pub type SymbMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx, T>>>;
+pub type DefMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, &'tcx BasicOp<'tcx, T>>;
+pub type ValuesBranchMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, ValueBranchMap<'tcx, T>>;
+pub type ValuesSwitchMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, ValueSwitchMap<'tcx, T>>;
