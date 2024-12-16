@@ -8,7 +8,7 @@ const MAX: i64 = i64::MAX;
 pub struct Domain {}
 
 #[derive(PartialEq, Debug)]
-enum RangeType {
+pub enum RangeType {
     Unknown,
     Regular,
     Empty,
@@ -19,26 +19,26 @@ where
     T: bounds::Bound + Num + Bounded,
 {
     pub rtype: RangeType,
-    pub range: Interval<T, T>,
+    pub range: Interval<UserType, UserType>,
 }
+
 #[derive(Num, Bounded, Debug, PartialEq, Eq, Hash, Copy, Clone)]
 enum UserType {
     Unknown,
     i32(i32),
     Empty,
 }
+
 impl<T> Range<T>
 where
     T: bounds::Bound + Num + Bounded,
 {
     // Default constructor
-    fn test () {
-        
-    }
+    fn test() {}
     pub fn new(value: T) -> Self {
         Self {
             rtype: RangeType::Regular,
-            range: Interval::new_unchecked(T::min_value(), T::max_value()),
+            range: Interval::new_unchecked(value, value),
         }
     }
     pub fn default() -> Self {
@@ -50,7 +50,6 @@ where
             rtype,
             range: Interval::new_unchecked(lb, ub),
         }
-
     }
 
     // Getter for lower bound

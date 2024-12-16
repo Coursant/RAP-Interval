@@ -1,24 +1,24 @@
-use super::{domain::*, range::Range};
+use super::{domain::*, range::RangeType, range::*};
 
 use rustc_middle::{mir::*, ty::*};
 use std::collections::{HashMap, HashSet};
 
-pub struct ConstraintGraph<'tcx> {
+pub struct ConstraintGraph<'tcx, T> {
     // Protected fields
-    vars: VarNodes<'tcx>, // The variables of the source program
-    oprs: GenOprs<'tcx>,  // The operations of the source program
+    vars: VarNodes<'tcx, T>, // The variables of the source program
+    oprs: GenOprs<'tcx, T>,  // The operations of the source program
 
     // Private fields
     // func: Option<Function>,             // Save the last Function analyzed
-    defmap: DefMap,   // Map from variables to the operations that define them
-    usemap: UseMap,   // Map from variables to operations where variables are used
-    symbmap: SymbMap, // Map from variables to operations where they appear as bounds
-    values_branchmap: ValuesBranchMap, // Store intervals, basic blocks, and branches
-    values_switchmap: ValuesSwitchMap, // Store intervals for switch branches
+    defmap: DefMap<'tcx, T>, // Map from variables to the operations that define them
+    usemap: UseMap<'tcx, T>, // Map from variables to operations where variables are used
+    symbmap: SymbMap<'tcx, T>, // Map from variables to operations where they appear as bounds
+    values_branchmap: ValuesBranchMap<'tcx, T>, // Store intervals, basic blocks, and branches
+    values_switchmap: ValuesSwitchMap<'tcx, T>, // Store intervals for switch branches
     constant_vector: Vec<APInt>, // Vector for constants from an SCC
 }
 
-impl ConstraintGraph {
+impl<'tcx, T> ConstraintGraph<'tcx, T> {
     pub fn new() -> Self {
         Self {
             vars: VarNodes::new(),
@@ -39,7 +39,6 @@ impl ConstraintGraph {
         self.vars.insert(v, &node);
         let uselist: HashSet<BasicOp> = HashSet::new();
         self.usemap.insert(v, &uselist)
-
     }
 
     pub fn get_oprs(&self) -> &GenOprs {
@@ -52,10 +51,6 @@ impl ConstraintGraph {
 
     pub fn get_usemap(&self) -> &UseMap {
         &self.usemap
-    }
-
-    pub fn add_unary_op(&mut self, i: &Instruction) {
-        // Adds an UnaryOp to the graph
     }
 
     // pub fn build_graph(&self, body: &Body) -> ConstraintGraph {
@@ -71,25 +66,17 @@ impl ConstraintGraph {
     //     }
     //     graph
     // }
-    pub fn build_graph<'tcx>(&mut self, body: &'tcx Body) {
+    pub fn build_graph(&mut self, body: &'tcx Body) {
         self.build_value_maps(body, self.tcx);
-
-        for inst in func.instructions() {
-            let ty = inst.get_type();
-
-            if !ty.is_integer() {
-                continue;
+        for block in body.basic_blocks() {
+            let block_data = &body[block];
+            // Traverse statements
+            for statement in block_data.statements.iter() {
+                self.build_operations(statement);
             }
-
-            if !self.is_valid_instruction(&inst) {
-                continue;
-            }
-
-            self.build_operations();
         }
     }
-
-    pub fn build_value_maps<'tcx>(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) {
+    pub fn build_value_maps(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) {
         for (block_index, block) in body.basic_blocks.iter_enumerated() {
             if let Some(terminator) = &block.terminator {
                 match &terminator.kind {
@@ -110,7 +97,7 @@ impl ConstraintGraph {
         }
     }
 
-    pub fn build_value_branch_map<'tcx>(
+    pub fn build_value_branch_map(
         &mut self,
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
@@ -124,27 +111,24 @@ impl ConstraintGraph {
                 // 获取分支目标
                 self.add_varnode(op1.place());
                 self.add_varnode(op2.place());
-                let true_block = targets[0];
-                let false_block = targets[1];
+                let true_block = targets.target_for_value(0);
+                let false_block = targets.target_for_value(0);
 
-                // 分析操作数和条件，计算范围
                 let (true_range, false_range) = self.calculate_ranges(op1, op2, cmp_op, tcx);
 
-                if let Some(local) = place.as_local() {
-                    let vbm = ValueBranchMap {
-                        variable: local,
-                        true_block,
-                        false_block,
-                        true_range,
-                        false_range,
-                    };
-                    self.values_branch_map.insert(local, vbm);
-                }
-            }
+                let vbm = ValueBranchMap::new(
+                    &place,
+                    &true_block,
+                    &false_block,
+                    &BasicInterval::new(true_range),
+                    &BasicInterval::new(false_range),
+                );
+                self.values_branch_map.insert(place, vbm);
+            };
         }
     }
 
-    fn extract_condition<'tcx>(
+    fn extract_condition(
         &self,
         place: &Place<'tcx>,
         block: &BasicBlockData<'tcx>,
@@ -160,7 +144,7 @@ impl ConstraintGraph {
         }
         None
     }
-    pub fn calculate_ranges<'tcx>(
+    pub fn calculate_ranges(
         &self,
         op1: Operand<'tcx>,
         op2: Operand<'tcx>,
@@ -174,19 +158,24 @@ impl ConstraintGraph {
         match (const_op1, const_op2) {
             (Some(c1), Some(c2)) => {}
             (Some(c), None) | (None, Some(c)) => {
-                // 单变量与常量比较
-                self.add_varnode(c.place());
-                let variable_range = Range::new(UserType::new()); //使用userType
-                let true_range = self.apply_comparison(c, variable_range, cmp_op, true);
-                let false_range = self.apply_comparison(c, variable_range, cmp_op, false);
+                let const_in_left: bool;
+                if const_op1.is_some() {
+                    const_in_left = true;
+                } else {
+                    const_in_left = false;
+                }
+                // 此处应根据T进行选取，设定为scalarInt
+                let const_range = Range::new(c.const_.try_to_scalar().unwrap());
+
+                let true_range = self.apply_comparison(const_range, cmp_op, true, const_in_left);
+                let false_range = self.apply_comparison(const_range, cmp_op, false, const_in_left);
+
                 (true_range, false_range)
             }
             (None, None) => {
                 // 两个变量之间的比较
-                self.add_varnode(op1.place());
-                self.add_varnode(op2.place());
-                let variable_range1 = Range::new(UserType::new()); //使用userType
-                let variable_range2 = Range::new(UserType::new()); //使用userType
+                let variable_range1 = Range::new(UserType::new());
+                let variable_range2 = Range::new(UserType::new());
                 let true_range =
                     self.apply_comparison(variable_range1, variable_range2, cmp_op, true);
                 let false_range =
@@ -199,25 +188,55 @@ impl ConstraintGraph {
     /// 从操作数中提取常量值
 
     /// 根据比较条件评估真/假分支的范围
-    fn apply_comparison<T>(
+    fn apply_comparison(
         &self,
-        constant: i128,
-        variable_range: Range<T>,
+        const_range: Range<T>,
         cmp_op: BinOp,
         is_true_branch: bool,
-    ) -> Option<(i128, i128)> {
+        const_in_left: bool,
+    ) -> Option<(T, T)> {
         match cmp_op {
-            BinOp::Lt if is_true_branch => Some((variable_range.0, constant - 1)),
-            BinOp::Lt if !is_true_branch => Some((constant, variable_range.1)),
-            BinOp::Le if is_true_branch => Some((variable_range.0, constant)),
-            BinOp::Le if !is_true_branch => Some((constant + 1, variable_range.1)),
-            BinOp::Gt if is_true_branch => Some((constant + 1, variable_range.1)),
-            BinOp::Gt if !is_true_branch => Some((variable_range.0, constant)),
-            BinOp::Ge if is_true_branch => Some((constant, variable_range.1)),
-            BinOp::Ge if !is_true_branch => Some((variable_range.0, constant - 1)),
-            BinOp::Eq if is_true_branch => Some((constant, constant)),
-            BinOp::Eq if !is_true_branch => None, // 不相等的范围较难确定
-            _ => None,
+            BinOp::Lt => {
+                if is_true_branch ^ const_in_left {
+                    Range::with_bounds(T::min, const_range.get_lower(), RangeType::Regular)
+                } else {
+                    Range::with_bounds(const_range.get_upper(), T::max, RangeType::Regular)
+                }
+            }
+
+            BinOp::Le => {
+                if is_true_branch ^ const_in_left {
+                    Range::with_bounds(T::min, const_range.get_lower(), RangeType::Regular)
+                } else {
+                    Range::with_bounds(const_range.get_upper(), T::max, RangeType::Regular)
+                }
+            }
+
+            BinOp::Gt => {
+                if is_true_branch ^ const_in_left {
+                    Range::with_bounds(T::min, const_range.get_lower(), RangeType::Regular)
+                } else {
+                    Range::with_bounds(const_range.get_upper(), T::max, RangeType::Regular)
+                }
+            }
+
+            BinOp::Ge => {
+                if is_true_branch ^ const_in_left {
+                    Range::with_bounds(T::min, const_range.get_lower(), RangeType::Regular)
+                } else {
+                    Range::with_bounds(const_range.get_upper(), T::max, RangeType::Regular)
+                }
+            }
+
+            BinOp::Eq => {
+                if is_true_branch ^ const_in_left {
+                    Range::with_bounds(T::min, const_range.get_lower(), RangeType::Regular)
+                } else {
+                    Range::with_bounds(const_range.get_upper(), T::max, RangeType::Regular)
+                }
+            }
+
+            _ => Range::empty(),
         }
     }
 
@@ -230,73 +249,52 @@ impl ConstraintGraph {
     }
     pub fn build_varnodes(&mut self) {
         // Builds VarNodes
+        for (name, node) in self.vars.iter_mut() {
+            let is_undefined = !self.defmap.contains_key(name);
+            node.init(is_undefined);
+        }
+    }
+    pub fn build_operations(&mut self, inst: &Statement) {
+        // Handle binary instructions
+        match inst.kind {
+            StatementKind::BinaryOp(_) => {
+                self.add_binary_op(inst);
+            }
+            StatementKind::PHI(phi) => {
+                if phi.name().starts_with(sigma_string) {
+                    self.add_sigma_op(phi);
+                } else {
+                    self.add_phi_op(phi);
+                }
+            }
+            StatementKind::UnaryOp(_) => {
+                self.add_unary_op(inst);
+            }
+            _ => {
+                // Handle other cases if necessary
+            }
+        }
+    }
+    fn add_unary_op(&mut self, inst: &Statement) {
+        // Implementation for adding unary operation
+        // ...
     }
 
-    pub fn build_symbolic_intersect_map(&mut self) {
-        // Builds symbolic intersect map
+    fn add_binary_op(&mut self, inst: &Statement) {
+        // Implementation for adding binary operation
+        // ...
     }
 
-    pub fn build_usemap(&self, component: &SmallPtrSet<VarNode, 32>) -> UseMap {
-        // Builds the use map for a component
+    fn add_phi_op(&mut self, phi: &'tcx PHINode<'tcx>) {
+        // Implementation for adding phi operation
+        // ...
     }
 
-    pub fn propagate_to_next_scc(&mut self, component: &SmallPtrSet<VarNode, 32>) {
-        // Propagates data to the next SCC
+    fn add_sigma_op(&mut self, phi: &'tcx PHINode<'tcx>) {
+        // Implementation for adding sigma operation
+        // ...
     }
-
     pub fn find_intervals(&mut self) {
-        // Finds intervals of the variables in the graph
-    }
-
-    pub fn generate_entry_points(
-        &self,
-        component: &SmallPtrSet<VarNode, 32>,
-        entry_points: &mut SmallPtrSet<Value, 6>,
-    ) {
-        // Generates entry points
-    }
-
-    pub fn fix_intersects(&mut self, component: &SmallPtrSet<VarNode, 32>) {
-        // Fixes intersections
-    }
-
-    pub fn generate_active_vars(
-        &self,
-        component: &SmallPtrSet<VarNode, 32>,
-        active_vars: &mut SmallPtrSet<Value, 6>,
-    ) {
-        // Generates active variables
-    }
-
-    pub fn clear(&mut self) {
-        // Releases memory used by the graph
-    }
-
-    pub fn print(&self, f: &Function, os: &mut raw_ostream) {
-        // Prints the graph in dot format
-    }
-
-    pub fn print_to_file(&self, f: &Function, file_name: &str) {
-        // Prints graph to a file
-    }
-
-    pub fn dump(&self, f: &Function) {
-        self.print(f, &mut dbgs());
-        dbgs().write("\n");
-    }
-
-    pub fn print_result_intervals(&self) {
-        // Prints result intervals
-    }
-
-    pub fn compute_stats(&self) {
-        // Computes stats
-    }
-
-    pub fn get_range(&self, v: &Value) -> Range {
-        // Gets range for a value
-    }
-    fn find_intervals(&mut self) {
         // 构建符号交集映射
         self.build_symbolic_intersect_map();
 
@@ -361,70 +359,26 @@ impl ConstraintGraph {
         // 构建符号交集映射
     }
 
-    fn fix_intersects(&self, component: &HashSet<Rc<VarNode>>) {
-        // 修复交集
-    }
-
-    fn build_use_map(&self, component: &HashSet<Rc<VarNode>>) -> HashMap<String, Vec<Rc<VarNode>>> {
-        // 构建使用映射
-        HashMap::new()
-    }
-
-    fn generate_entry_points(
-        &self,
-        component: &HashSet<Rc<VarNode>>,
-        entry_points: &mut HashSet<String>,
-    ) {
-        // 生成入口点
-    }
-
-    fn pre_update(
-        &self,
-        comp_use_map: &HashMap<String, Vec<Rc<VarNode>>>,
-        entry_points: &HashSet<String>,
-    ) {
-        // 预更新范围
-    }
-
-    fn generate_active_vars(
-        &self,
-        component: &HashSet<Rc<VarNode>>,
-        active_vars: &mut HashSet<String>,
-    ) {
-        // 生成活动变量
-    }
-
-    fn pos_update(
-        &self,
-        comp_use_map: &HashMap<String, Vec<Rc<VarNode>>>,
-        active_vars: &HashSet<String>,
-        component: &HashSet<Rc<VarNode>>,
-    ) {
-        // 二次更新范围
-    }
-
-    fn propagate_to_next_scc(&self, component: &HashSet<Rc<VarNode>>) {
-        // 将结果传播到下一个 SCC
-    }
-}
-pub struct Nuutila<'a> {
-    worklist: Vec<&'a Rc<VarNode>>,
-    components: Vec<HashSet<Rc<VarNode>>>,
 }
 
-impl<'a> Nuutila<'a> {
-    fn new(
-        vars: &'a VarNodes,
-        use_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
-        symb_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
-    ) -> Self {
-        Nuutila {
-            worklist: Vec::new(),
-            components: Vec::new(),
-        }
-    }
+// pub struct Nuutila<'a> {
+//     worklist: Vec<&'a Rc<VarNode>>,
+//     components: Vec<HashSet<Rc<VarNode>>>,
+// }
 
-    fn components(&self) -> &Vec<HashSet<Rc<VarNode>>> {
-        &self.components
-    }
-}
+// impl<'a> Nuutila<'a> {
+//     fn new(
+//         vars: &'a VarNodes,
+//         use_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
+//         symb_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
+//     ) -> Self {
+//         Nuutila {
+//             worklist: Vec::new(),
+//             components: Vec::new(),
+//         }
+//     }
+
+//     fn components(&self) -> &Vec<HashSet<Rc<VarNode>>> {
+//         &self.components
+//     }
+// }

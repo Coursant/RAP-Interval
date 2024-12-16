@@ -1,21 +1,107 @@
-use rustc_middle::mir::{LocalDecl, Place};
+use rustc_middle::mir::{BasicBlock, LocalDecl, Place};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use crate::interval_analysis::range::Range;
 
-pub struct BasicInterval<T> {
-    pub range: Option<Range<T>>,
+trait BasicIntervalTrait<'tcx, T> {
+    // fn get_value_id(&self) -> IntervalId;
+    fn get_range(&self) -> &Range<T>;
+    fn set_range(&mut self, new_range: Range<T>);
+    fn print(&self);
 }
 
-pub struct Instruction {
-    // Some fields representing the instruction
+#[derive(Debug, Clone)]
+pub struct BasicInterval<'tcx, T> {
+    range: Range<T>,
 }
 
-// Define a Range struct for intervals
+impl<'tcx, T> BasicInterval<'tcx, T> {
+    pub fn new(range: Range<T>) -> Self {
+        Self { range }
+    }
+}
 
-impl <T>BasicInterval<T> {
-    pub fn set_range(&mut self, new_range: Range) {
-        self.range = Some(new_range);
+impl<'tcx, T> BasicIntervalTrait<'tcx, T> for BasicInterval<'tcx, T> {
+    // fn get_value_id(&self) -> IntervalId {
+    //     IntervalId::BasicIntervalId
+    // }
+
+    fn get_range(&self) -> &Range {
+        &self.range
+    }
+
+    fn set_range(&mut self, new_range: Range) {
+        self.range = new_range;
+        if self.range.get_lower() > self.range.get_upper() {
+            self.range.set_empty();
+        }
+    }
+
+    fn print(&self) {
+        println!(
+            "BasicInterval: Range: [{}, {}], Data: {:?}",
+            self.range.get_lower(),
+            self.range.get_upper(),
+            self.data
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct SymbInterval<'tcx, T> {
+    base: BasicInterval<'tcx, T>,
+    bound: &'tcx Place<'tcx>,
+    predicate: Predicate,
+}
+
+impl<'tcx, T> SymbInterval<'tcx, T> {
+    pub fn new(range: Range, bound: &Place, predicate: Predicate) -> Self {
+        Self {
+            base: BasicInterval::new(range),
+            bound,
+            predicate,
+        }
+    }
+
+    pub fn get_operation(&self) -> &Predicate {
+        &self.predicate
+    }
+
+    pub fn get_bound(&self) -> &Place {
+        &self.bound
+    }
+
+    pub fn fix_intersects(&self, bound: &Place, sink: &Place) -> Range {
+        println!(
+            "Fixing intersects with bound {:?} and sink {:?}",
+            bound, sink
+        );
+    }
+}
+
+impl<'tcx, T> BasicIntervalTrait<'tcx, T> for SymbInterval<'tcx, T> {
+    // fn get_value_id(&self) -> IntervalId {
+    //     IntervalId::SymbIntervalId
+    // }
+
+    fn get_range(&self) -> &Range {
+        self.base.get_range()
+    }
+
+    fn set_range(&mut self, new_range: Range) {
+        self.base.set_range(new_range);
+    }
+
+    fn print(&self) {
+        println!(
+            "SymbInterval: Range: [{}, {}], Data: {:?}, Bound: {:?}, Predicate: {:?}",
+            self.get_range().get_lower(),
+            self.get_range().get_upper(),
+            self.base.get_data(),
+            self.bound,
+            self.predicate
+        );
     }
 }
 
@@ -27,15 +113,19 @@ pub trait Operation {
 }
 
 // Define the BasicOp struct
-pub struct BasicOp<'tcx,T> {
-    pub intersect: Option<&'tcx BasicInterval>, // The range associated with the operation
-    pub sink: & 'tcx VarNode<'tcx, T>,              // The target node storing the result
-    pub inst: Option<Instruction>,        // The instruction that originated this operation
+pub struct BasicOp<'tcx, T> {
+    pub intersect: &'tcx BasicInterval<'tcx, T>, // The range associated with the operation
+    pub sink: &'tcx VarNode<'tcx, T>,            // The target node storing the result
+    pub inst: Option<Instruction>,               // The instruction that originated this operation
 }
 
-impl<'tcx,T> BasicOp<'tcx,T> {
+impl<'tcx, T> BasicOp<'tcx, T> {
     // Constructor for creating a new BasicOp
-    pub fn new(intersect: Option<BasicInterval>, sink: &VarNode, inst: Option<Instruction>) -> Self {
+    pub fn new(
+        intersect: Option<BasicInterval>,
+        sink: &VarNode,
+        inst: Option<Instruction>,
+    ) -> Self {
         BasicOp {
             intersect,
             sink,
@@ -86,7 +176,7 @@ impl<'tcx> Operation for BasicOp<'tcx> {
     }
 }
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
-pub struct VarNode<'tcx,T> {
+pub struct VarNode<'tcx, T> {
     // The program variable which is represented.
     v: &'tcx Place<'tcx>,
     // A Range associated to the variable.
@@ -94,7 +184,7 @@ pub struct VarNode<'tcx,T> {
     // Used by the crop meet operator.
     abstract_state: char,
 }
-impl<'tcx,T> VarNode<'tcx,T> {
+impl<'tcx, T> VarNode<'tcx, T> {
     pub fn new(v: &Place) -> Self {
         Self {
             v,
@@ -132,7 +222,7 @@ impl<'tcx,T> VarNode<'tcx,T> {
     }
 
     /// Returns the variable represented by this node.
-    pub fn get_value(&self) -> &LocalDecl {
+    pub fn get_value(&self) -> &Place {
         &self.v
     }
 
@@ -161,11 +251,74 @@ impl<'tcx,T> VarNode<'tcx,T> {
         // Implementation of storing the abstract state.
     }
 }
+pub struct ValueBranchMap<'tcx, T> {
+    v: &'tcx Place<'tcx>,                // The value associated with the branch
+    bb_true: &'tcx BasicBlock<'tcx>,     // True side of the branch
+    bb_false: &'tcx BasicBlock<'tcx>,    // False side of the branch
+    itv_t: &'tcx BasicInterval<'tcx, T>, // Interval for the true side
+    itv_f: &'tcx BasicInterval<'tcx, T>,
+}
+impl<'tcx, T> ValueBranchMap<'tcx, T> {
+    pub fn new(
+        v: &'tcx Place<'tcx>,
+        bb_true: &'tcx BasicBlock<'tcx>,
+        bb_false: &'tcx BasicBlock<'tcx>,
+        itv_t: &'tcx BasicInterval<'tcx, T>,
+        itv_f: &'tcx BasicInterval<'tcx, T>,
+    ) -> Self {
+        Self {
+            v,
+            bb_true,
+            bb_false,
+            itv_t,
+            itv_f,
+        }
+    }
 
+    /// Get the "false side" of the branch
+    pub fn get_bb_false(&self) -> &BasicBlock<'tcx> {
+        self.bb_false
+    }
+
+    /// Get the "true side" of the branch
+    pub fn get_bb_true(&self) -> &BasicBlock<'tcx> {
+        self.bb_true
+    }
+
+    /// Get the interval associated with the true side of the branch
+    pub fn get_itv_t(&self) -> &BasicInterval<'tcx> {
+        self.itv_t
+    }
+
+    /// Get the interval associated with the false side of the branch
+    pub fn get_itv_f(&self) -> &BasicInterval<'tcx> {
+        self.itv_f
+    }
+
+    /// Get the value associated with the branch
+    pub fn get_v(&self) -> &Place<'tcx> {
+        self.v
+    }
+
+    /// Change the interval associated with the true side of the branch
+    pub fn set_itv_t(&mut self, itv: &BasicInterval) {
+        self.itv_t = itv;
+    }
+
+    /// Change the interval associated with the false side of the branch
+    pub fn set_itv_f(&mut self, itv: &BasicInterval) {
+        self.itv_f = itv;
+    }
+
+    // pub fn clear(&mut self) {
+    //     self.itv_t = Box::new(EmptyInterval::new());
+    //     self.itv_f = Box::new(EmptyInterval::new());
+    // }
+}
 pub type VarNodes<'tcx, T> = HashMap<&'tcx Place<'tcx>, &'tcx VarNode<'tcx, T>>;
 pub type GenOprs<'tcx, T> = HashSet<&'tcx BasicOp<'tcx, T>>;
 pub type UseMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx, T>>>;
 pub type SymbMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, HashSet<&'tcx BasicOp<'tcx, T>>>;
 pub type DefMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, &'tcx BasicOp<'tcx, T>>;
 pub type ValuesBranchMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, ValueBranchMap<'tcx, T>>;
-pub type ValuesSwitchMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, ValueSwitchMap<'tcx, T>>;
+// pub type ValuesSwitchMap<'tcx, T> = HashMap<&'tcx Place<'tcx>, ValueSwitchMap<'tcx, T>>;
