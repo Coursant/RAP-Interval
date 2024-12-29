@@ -1,8 +1,8 @@
 use super::{domain::*, range::RangeType, range::*};
 
 use rustc_middle::{mir::*, ty::*};
+use rustc_mir_transform::*;
 use std::collections::{HashMap, HashSet};
-
 pub struct ConstraintGraph<'tcx, T> {
     // Protected fields
     vars: VarNodes<'tcx, T>, // The variables of the source program
@@ -256,6 +256,17 @@ impl<'tcx, T> ConstraintGraph<'tcx, T> {
     }
     pub fn build_operations(&mut self, inst: &Statement) {
         // Handle binary instructions
+        if let StatementKind::Assign(box (place, rvalue)) = &inst.kind {
+            match rvalue {
+                Rvalue::BinaryOp(op, box (op1, op2)) => {
+                    self.add_varnode(op1.place());
+                    self.add_varnode(op2.place());
+                    self.add_varnode(place);
+                    self.add_binary_op(inst);
+                }
+                _ => {}
+            }
+        }
         match inst.kind {
             StatementKind::BinaryOp(_) => {
                 self.add_binary_op(inst);
@@ -358,27 +369,26 @@ impl<'tcx, T> ConstraintGraph<'tcx, T> {
     fn build_symbolic_intersect_map(&self) {
         // 构建符号交集映射
     }
-
 }
 
-// pub struct Nuutila<'a> {
-//     worklist: Vec<&'a Rc<VarNode>>,
-//     components: Vec<HashSet<Rc<VarNode>>>,
-// }
+pub struct Nuutila<'a> {
+    worklist: Vec<&'a Rc<VarNode>>,
+    components: Vec<HashSet<Rc<VarNode>>>,
+}
 
-// impl<'a> Nuutila<'a> {
-//     fn new(
-//         vars: &'a VarNodes,
-//         use_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
-//         symb_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
-//     ) -> Self {
-//         Nuutila {
-//             worklist: Vec::new(),
-//             components: Vec::new(),
-//         }
-//     }
+impl<'a> Nuutila<'a> {
+    fn new(
+        vars: &'a VarNodes,
+        use_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
+        symb_map: &'a HashMap<String, Vec<Rc<VarNode>>>,
+    ) -> Self {
+        Nuutila {
+            worklist: Vec::new(),
+            components: Vec::new(),
+        }
+    }
 
-//     fn components(&self) -> &Vec<HashSet<Rc<VarNode>>> {
-//         &self.components
-//     }
-// }
+    fn components(&self) -> &Vec<HashSet<Rc<VarNode>>> {
+        &self.components
+    }
+}

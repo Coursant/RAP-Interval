@@ -19,13 +19,15 @@ where
     T: bounds::Bound + Num + Bounded,
 {
     pub rtype: RangeType,
-    pub range: Interval<UserType, UserType>,
+    pub range: Interval<T, T>,
 }
 
 #[derive(Num, Bounded, Debug, PartialEq, Eq, Hash, Copy, Clone)]
 enum UserType {
     Unknown,
-    i32(i32),
+    I32(i32),
+    I64(i64),
+    Usize(usize),
     Empty,
 }
 
