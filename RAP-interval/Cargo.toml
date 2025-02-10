@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Coursant <24210240198@fudan.edu.cn>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2021"
 
 [dependencies]
 num-traits = "0.2.19"
@@ -22,11 +23,13 @@ wait-timeout = "0.2.0"
 rustc-demangle = "0.1.21"
 colorful = "0.2.1"
 gcollections = "1.5.0"
-
-
+rand = "0.9.0"
 #stopwatch = "0.0.7"
 [features]
 backtraces = ["snafu/backtraces", "snafu/backtraces-impl-backtrace-crate"]
+
+[build]
+rustflags = ["-Awarnings"]
 
 [package.metadata.rust-analyzer]
 rustc_private = true
