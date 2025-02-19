@@ -62,47 +62,47 @@ use tracing::{debug, error, info, warn};
 use RAP_interval::domain::ConstraintGraph::ConstraintGraph;
 use RAP_interval::SSA::SSATransformer::*;
 
-fn analyze_mir<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) {
-    // // let mut visitor = LocalUseVisitor { tcx, &body };
-    // // visitor.visit_body(&body);
-    // let param_env = tcx.param_env_reveal_all_normalized(body.source.def_id());
-    // // let ssa = SsaLocals::new(tcx, &body, param_env);
-    // let dominators = body.basic_blocks.dominators();
-    // let cfg = extract_cfg_from_predecessors(&body);
-    // let variables = body.local_decls.indices().collect::<Vec<_>>();
-    // println!("{:?}", cfg);
-    // println!("{:?}", dominators);
-    // println!("!!!!!!!!!!!!!!!!!!!!!!!!");
-    // let dom_tree = construct_dominance_tree(&body);
-    // print_dominance_tree(&dom_tree, START_BLOCK, 0);
-    // let df = compute_dominance_frontier(&body, &dom_tree);
-    // print!("{:?}", df);
-    // println!("!!!!!!!!!!!!!!!!!!!!!!!!");
-    // let local_assign_blocks = map_locals_to_assign_blocks(&body);
+// fn analyze_mir<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) {
+//     // // let mut visitor = LocalUseVisitor { tcx, &body };
+//     // // visitor.visit_body(&body);
+//     // let param_env = tcx.param_env_reveal_all_normalized(body.source.def_id());
+//     // // let ssa = SsaLocals::new(tcx, &body, param_env);
+//     // let dominators = body.basic_blocks.dominators();
+//     // let cfg = extract_cfg_from_predecessors(&body);
+//     // let variables = body.local_decls.indices().collect::<Vec<_>>();
+//     // println!("{:?}", cfg);
+//     // println!("{:?}", dominators);
+//     // println!("!!!!!!!!!!!!!!!!!!!!!!!!");
+//     // let dom_tree = construct_dominance_tree(&body);
+//     // print_dominance_tree(&dom_tree, START_BLOCK, 0);
+//     // let df = compute_dominance_frontier(&body, &dom_tree);
+//     // print!("{:?}", df);
+//     // println!("!!!!!!!!!!!!!!!!!!!!!!!!");
+//     // let local_assign_blocks = map_locals_to_assign_blocks(&body);
 
-    // print!("{:?}", local_assign_blocks);
-    // // let mut visitor = LocalUseVisitor { tcx, body };
-    // insert_phi_statment(&mut body, &df, local_assign_blocks);
-    let body = tcx.optimized_mir(def_id);
-    //不许存储body的可变引用
-    let mut ssa: SSATransformer<'tcx> = SSATransformer::new(tcx, def_id);
-    ssa.insert_phi_statment();
-    ssa.analyze();
-    let mut cg: ConstraintGraph<'tcx, u32> = ConstraintGraph::new(tcx);
-    println!("{:?}", cg.vars);
+//     // print!("{:?}", local_assign_blocks);
+//     // // let mut visitor = LocalUseVisitor { tcx, body };
+//     // insert_phi_statment(&mut body, &df, local_assign_blocks);
+//     let body = tcx.optimized_mir(def_id);
+//     //不许存储body的可变引用
+//     let mut ssa: SSATransformer<'tcx> = SSATransformer::new(tcx, def_id);
+//     ssa.insert_phi_statment();
+//     ssa.rename_variables();
+//     ssa.analyze();
+//     let mut cg: ConstraintGraph<'tcx, u32> = ConstraintGraph::new(tcx);
+//     println!("{:?}", cg.vars);
 
-    let p =
-        RAP_interval::domain::ConstraintGraph::ConstraintGraph::<'tcx, u32>::create_random_place(
-            tcx,
-        );
-    println!("{:?}", p);
+//     let p =
+//         RAP_interval::domain::ConstraintGraph::ConstraintGraph::<'tcx, u32>::create_random_place(
+//             tcx,
+//         );
+//     println!("{:?}", p);
 
-    cg.build_graph(&body);
+//     cg.build_graph(&body);
 
-    println!("{:?}", cg.vars);
-    println!("{:?}", cg.values_branchmap);
-
-}
+//     println!("{:?}", cg.vars);
+//     println!("{:?}", cg.values_branchmap);
+// }
 
 struct MyDataflowCallbacks;
 
@@ -112,18 +112,46 @@ impl Callbacks for MyDataflowCallbacks {
         compiler: &Compiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
-        let mut tcx = queries.global_ctxt().unwrap();
-        tcx.enter(|tcx| {
-            // 获取 main 函数对应的LocalDefId，仅做示例
-            if let Some(def_id) = tcx
-                .hir()
-                .body_owners()
-                .find(|id| tcx.def_path_str(*id) == "main")
-            {
-                analyze_mir(tcx, def_id);
-            }
+        compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
+            tcx.hir()
+                .bodies()
+                .for_each(|(def_id, _)| {
+                    if let Some(body) = tcx.optimized_mir(def_id) {
+                        let mut body = body.borrow_mut();
+                        let mir_pass = ModifyMirPass;
+                        mir_pass.run_pass(rustc_mir::transform::MirSource::from_instance(tcx, def_id), &mut body);
+                    }
+                });
         });
         Compilation::Continue
+        }
+}
+use rustc_middle::mir::{Body, BasicBlock, TerminatorKind, Place, Operand, Rvalue};
+use rustc_middle::ty::TyCtxt;
+use rustc_mir::transform::{MirPass, MirSource};
+
+pub struct ModifyMirPass;
+
+impl<'tcx> MirPass<'tcx> for ModifyMirPass {
+    fn run_pass(&self, tcx: TyCtxt<'tcx>, source: MirSource<'tcx>, body: &mut Body<'tcx>) {
+        let mut ssa: SSATransformer<'tcx> = SSATransformer::new(tcx, def_id,body);
+        ssa.insert_phi_statment();
+        ssa.rename_variables();
+        ssa.analyze();
+        let mut cg: ConstraintGraph<'tcx, u32> = ConstraintGraph::new(tcx);
+        println!("{:?}", cg.vars);
+    
+        let p =
+            RAP_interval::domain::ConstraintGraph::ConstraintGraph::<'tcx, u32>::create_random_place(
+                tcx,
+            );
+        println!("{:?}", p);
+    
+        cg.build_graph(&body);
+    
+        println!("{:?}", cg.vars);
+        println!("{:?}", cg.values_branchmap);
+
     }
 }
 
