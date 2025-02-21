@@ -53,11 +53,13 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_target::abi::FieldIdx;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::rc::Rc;
 use tracing::{debug, error, info, warn};
 use RAP_interval::domain::ConstraintGraph::ConstraintGraph;
 use RAP_interval::SSA::SSATransformer::*;
@@ -112,51 +114,46 @@ impl Callbacks for MyDataflowCallbacks {
         compiler: &Compiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
-        compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-            tcx.hir()
-                .bodies()
-                .for_each(|(def_id, _)| {
-                    if let Some(body) = tcx.optimized_mir(def_id) {
-                        let mut body = body.borrow_mut();
-                        let mir_pass = ModifyMirPass;
-                        mir_pass.run_pass(rustc_mir::transform::MirSource::from_instance(tcx, def_id), &mut body);
-                    }
-                });
+        let mut tcx = queries.global_ctxt().unwrap();
+        tcx.enter(|tcx| {
+            // 获取 main 函数对应的LocalDefId，仅做示例
+            if let Some(def_id) = tcx
+                .hir()
+                .body_owners()
+                .find(|id| tcx.def_path_str(*id) == "main")
+            {
+                analyze_mir(tcx, def_id);
+            }
         });
         Compilation::Continue
-        }
-}
-use rustc_middle::mir::{Body, BasicBlock, TerminatorKind, Place, Operand, Rvalue};
-use rustc_middle::ty::TyCtxt;
-use rustc_mir::transform::{MirPass, MirSource};
-
-pub struct ModifyMirPass;
-
-impl<'tcx> MirPass<'tcx> for ModifyMirPass {
-    fn run_pass(&self, tcx: TyCtxt<'tcx>, source: MirSource<'tcx>, body: &mut Body<'tcx>) {
-        let mut ssa: SSATransformer<'tcx> = SSATransformer::new(tcx, def_id,body);
-        ssa.insert_phi_statment();
-        ssa.rename_variables();
-        ssa.analyze();
-        let mut cg: ConstraintGraph<'tcx, u32> = ConstraintGraph::new(tcx);
-        println!("{:?}", cg.vars);
-    
-        let p =
-            RAP_interval::domain::ConstraintGraph::ConstraintGraph::<'tcx, u32>::create_random_place(
-                tcx,
-            );
-        println!("{:?}", p);
-    
-        cg.build_graph(&body);
-    
-        println!("{:?}", cg.vars);
-        println!("{:?}", cg.values_branchmap);
-
     }
 }
 
+fn analyze_mir<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) {
+    let body = tcx.optimized_mir(def_id);
+    //不许存储body的可变引用
+    let mut ssa: SSATransformer<'tcx> = SSATransformer::new(tcx, def_id);
+    ssa.insert_phi_statment();
+    ssa.rename_variables();
+    ssa.analyze();
+    let mut cg: ConstraintGraph<'tcx, u32> = ConstraintGraph::new(tcx);
+    println!("{:?}", cg.vars);
+
+    let p =
+        RAP_interval::domain::ConstraintGraph::ConstraintGraph::<'tcx, u32>::create_random_place(
+            tcx,
+        );
+    println!("{:?}", p);
+
+    cg.build_graph(&body);
+
+    println!("{:?}", cg.vars);
+    println!("{:?}", cg.values_branchmap);
+}
 // 在main函数中使用rustc_driver手动调用编译过程，并运行回调进行数据流分析
 fn main() {
+    std::env::set_var("RUST_BACKTRACE", "full");
+
     let args = vec![
         String::from("rustc"),
         String::from("tests/test1.rs"),
