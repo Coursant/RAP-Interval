@@ -85,7 +85,8 @@ pub struct SSATransformer<'tcx> {
     dom_tree: HashMap<BasicBlock, Vec<BasicBlock>>, // 支配树
     df: HashMap<BasicBlock, HashSet<BasicBlock>>, // 支配前沿
     local_assign_blocks: HashMap<Local, HashSet<BasicBlock>>, // 局部变量的赋值块映射
-    reaching_def: HashMap<Local, Vec<Local>>,
+    reaching_def: HashMap<Local, Option<Local>>,
+    local_defination_block: HashMap<Local, BasicBlock>,
 }
 
 impl<'tcx> SSATransformer<'tcx> {
@@ -106,7 +107,8 @@ impl<'tcx> SSATransformer<'tcx> {
 
         let local_assign_blocks: HashMap<Local, HashSet<BasicBlock>> =
             Self::map_locals_to_assign_blocks(&body_ref.borrow());
-
+        let local_defination_block: HashMap<Local, BasicBlock> =
+            Self::map_locals_to_definition_block(&body_ref.borrow());
         SSATransformer {
             tcx,
             def_id,
@@ -118,30 +120,56 @@ impl<'tcx> SSATransformer<'tcx> {
             df,
             local_assign_blocks,
             reaching_def: HashMap::default(),
+            local_defination_block,
         }
     }
 
     /// 打印分析结果
+    ///
+    pub fn print_phi_mir(&self) {
+        let dir_path = "ssa_mir";
+        let phi_mir_file_path = format!("{}/phi_mir_{:?}.txt", dir_path, self.def_id);
+        let mut file = File::create(&phi_mir_file_path).unwrap();
+        let mut w = io::BufWriter::new(&mut file);
+        let options = PrettyPrintMirOptions::from_cli(self.tcx);
+        write_mir_fn(
+            self.tcx,
+            &self.body.borrow(),
+            &mut |_, _| Ok(()),
+            &mut w,
+            options,
+        )
+        .unwrap();
+    }
     pub fn analyze(&self) {
-        println!("{:?}", self.cfg);
-        println!("{:?}", self.dominators);
-        println!("!!!!!!!!!!!!!!!!!!!!!!!!");
+        // println!("{:?}", self.cfg);
+        // println!("{:?}", self.dominators);
+        // println!("!!!!!!!!!!!!!!!!!!!!!!!!");
+        print!("\ndom_tree{:?}", self.dom_tree);
         Self::print_dominance_tree(&self.dom_tree, START_BLOCK, 0);
-        print!("{:?}", self.df);
-        println!("!!!!!!!!!!!!!!!!!!!!!!!!");
-        print!("{:?}", self.local_assign_blocks);
-
+        // print!("{:?}", self.df);
+        // println!("!!!!!!!!!!!!!!!!!!!!!!!!");
+        // print!("{:?}", self.local_assign_blocks);
+        // print!("\n local_defination_block before phi {:?}", self.local_defination_block);
         let dir_path = "ssa_mir";
 
         // 动态生成文件路径
         let mir_file_path = format!("{}/mir_{:?}.txt", dir_path, self.def_id);
-        let phi_mir_file_path = format!("{}/phi_mir_{:?}.txt", dir_path, self.def_id);
+        let phi_mir_file_path = format!("{}/ssa_mir_{:?}.txt", dir_path, self.def_id);
         let mut file = File::create(&mir_file_path).unwrap();
-        let mut w = io::BufWriter::new(&mut file);
-        write_mir_pretty(self.tcx, None, &mut w).unwrap();
+        let mut w1 = io::BufWriter::new(&mut file);
+        write_mir_pretty(self.tcx, None, &mut w1).unwrap();
         let mut file2 = File::create(&phi_mir_file_path).unwrap();
         let mut w2 = io::BufWriter::new(&mut file2);
-        write_mir_fn(self.tcx, &self.body.borrow(), &mut |_, _| Ok(()), &mut w2).unwrap();
+        let options = PrettyPrintMirOptions::from_cli(self.tcx);
+        write_mir_fn(
+            self.tcx,
+            &self.body.borrow(),
+            &mut |_, _| Ok(()),
+            &mut w2,
+            options,
+        )
+        .unwrap();
     }
     fn depth_first_search_postorder(
         dom_tree: &HashMap<BasicBlock, Vec<BasicBlock>>,
@@ -173,6 +201,29 @@ impl<'tcx> SSATransformer<'tcx> {
         }
 
         postorder
+    }
+    fn map_locals_to_definition_block(body: &Body) -> HashMap<Local, BasicBlock> {
+        let mut local_to_block_map: HashMap<Local, BasicBlock> = HashMap::new();
+
+        // 遍历每个基本块
+        for (bb, block_data) in body.basic_blocks.iter_enumerated() {
+            // 遍历当前基本块中的每条语句
+            for statement in &block_data.statements {
+                match &statement.kind {
+                    // 如果语句是一个赋值语句
+                    StatementKind::Assign(box (place, _)) => {
+                        // 如果是局部变量（local）的定义
+                        if let Some(local) = place.as_local() {
+                            // 只有第一次遇到局部变量时才会映射它
+                            local_to_block_map.entry(local).or_insert(bb);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        local_to_block_map
     }
     fn map_locals_to_assign_blocks(body: &Body) -> HashMap<Local, HashSet<BasicBlock>> {
         let mut local_to_blocks: HashMap<Local, HashSet<BasicBlock>> = HashMap::new();
@@ -316,7 +367,7 @@ impl<'tcx> SSATransformer<'tcx> {
         depth: usize,
     ) {
         // 打印当前块
-        println!("{}{:?}", "  ".repeat(depth), current);
+        println!("\n{}{:?}", "  ".repeat(depth), current);
 
         // 遍历并递归打印子节点
         if let Some(children) = dom_tree.get(&current) {
@@ -339,30 +390,31 @@ impl<'tcx> SSATransformer<'tcx> {
     pub fn rename_variables(&mut self) {
         // 初始化每个变量的 reachingDef
         for local in self.body.borrow().local_decls.indices() {
-            self.reaching_def.insert(local, vec![local]);
+            self.reaching_def.insert(local, Some(local));
         }
+        self.local_defination_block = Self::map_locals_to_definition_block(&self.body.borrow());
+        print!("%%%%{:?}%%%%", self.reaching_def);
+        print!(
+            "\n local_defination_block after phi {:?}",
+            self.local_defination_block
+        );
 
         // 深度优先先序遍历支配树
         for bb in Self::depth_first_search_postorder(&self.dom_tree) {
-                self.process_basic_block(bb);
+            self.process_basic_block(bb);
         }
     }
 
     /// 处理单个基本块
     fn process_basic_block(&mut self, bb: BasicBlock) {
         // 获取基本块的可变引用
-        // 处理语句
-        let len = self.body.borrow().basic_blocks[bb]
-            .statements
-            .len();
+        let len = self.body.borrow().basic_blocks[bb].statements.len();
         for i in 0..len {
             self.rename_statement(i, bb);
         }
 
         // if let Some(terminator) = &mut block.terminator {
         //     self.rename_terminator(terminator);
-
-        // 处理后继块中的 φ 函数
 
         let successors: Vec<_> = self.body.borrow().basic_blocks[bb]
             .terminator()
@@ -408,7 +460,7 @@ impl<'tcx> SSATransformer<'tcx> {
                                 // 获取最新的 reaching definition
                                 unique_local = Some(local);
                                 if let Some(def_stack) = self.reaching_def.get(&local) {
-                                    if let Some(&latest_def) = def_stack.last() {
+                                    if let Some(&latest_def) = def_stack.into_iter().last() {
                                         *src = Place::from(latest_def); // 替换变量使用
                                     }
                                 }
@@ -419,9 +471,7 @@ impl<'tcx> SSATransformer<'tcx> {
                     // 更新 reaching_def，使 `place` 绑定到新的变量版本
                     if let Some(new_local) = place.as_local() {
                         self.reaching_def
-                            .entry(unique_local.unwrap())
-                            .or_default()
-                            .push(new_local);
+                            .insert(unique_local.unwrap(), Some(new_local));
                     }
                 }
             }
@@ -430,25 +480,27 @@ impl<'tcx> SSATransformer<'tcx> {
 
     /// 创建一个新的变量版本
 
-    
-
     // fn create_fresh_variable(&self, local: Local, body: &mut Body<'tcx>) -> Local {
     //     let new_local = body.local_decls.push(body.local_decls[local].clone());
     //     new_local
     // }
     pub fn rename_statement(&mut self, i: usize, bb: BasicBlock) {
-        for statement in self.body.clone().borrow_mut().basic_blocks_mut()[bb].statements.iter_mut() {
+        for statement in self.body.clone().borrow_mut().basic_blocks_mut()[bb]
+            .statements
+            .iter_mut()
+        {
+            // let rc_stat = Rc::new(RefCell::new(statement));
             let is_phi = Self::is_phi_statement(statement);
             match &mut statement.kind {
                 // 1. 赋值语句: 变量使用（右值），变量定义（左值）
                 StatementKind::Assign(box (place, rvalue)) => {
                     {
                         if !is_phi {
-                            self.replace_place(place);
+                            // self.update_reachinf_def(&place.local, &bb);
                             self.replace_rvalue(rvalue);
                         } else {
                             //每个定义生成的变量
-                            self.rename_local_def(place);
+                            // self.replace_place(place,rc_stat.clone());
                         }
                     }
                 }
@@ -457,7 +509,7 @@ impl<'tcx> SSATransformer<'tcx> {
                 StatementKind::Deinit(place) | StatementKind::SetDiscriminant { place, .. } => {
                     // let place_mut = unsafe { &mut *(place as *const _ as *mut _) };
 
-                    self.replace_place(place.as_mut());
+                    // self.replace_place(place.as_mut());
                 }
                 // 3. StorageLive: 变量定义
                 StatementKind::StorageLive(local) => {
@@ -528,12 +580,10 @@ impl<'tcx> SSATransformer<'tcx> {
     }
 
     fn replace_place(&mut self, place: &mut Place<'tcx>) {
-        if let Some(local) = place.as_local() {
-            if let Some(stack) = self.reaching_def.get(&local) {
-                if let Some(&latest) = stack.last() {
-                    *place = Place::from(latest);
-                }
-            }
+        if let Some(reaching_local) = self.reaching_def.get(&place.local) {
+            let local = reaching_local.unwrap().clone();
+            place.local = local;
+            //  *place = Place::from(local);
         }
     }
 
@@ -547,27 +597,62 @@ impl<'tcx> SSATransformer<'tcx> {
 
     fn rename_local_def(&mut self, place: &mut Place<'tcx>) {
         let old_local = place.as_local().unwrap();
-        let new_local = self.create_fresh_variable( old_local);
+        let new_local = self.create_fresh_variable(old_local);
         print!("fuck!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
         *place = Place::from(new_local);
 
-        self.reaching_def.entry(old_local).or_default().push(old_local);
+        // self.reaching_def
+        //     .entry(old_local)
+        //     .or_default()
+        //     .replace(Some(old_local));
     }
 
     fn replace_local(&self, local: &mut Local) {
-        if let Some(stack) = self.reaching_def.get(local) {
-            if let Some(&latest) = stack.last() {
-                *local = latest;
-            }
+        if let Some(reaching_local) = self.reaching_def.get(local) {
+            // if let Some(latest) = stack {
+            //     *local = latest;
+            // }
         }
     }
 
-    
-    fn create_fresh_variable(&mut self, local:  Local)->Local  {
+    fn create_fresh_variable(&mut self, local: Local) -> Local {
         let mut binding = self.body.borrow_mut();
         let new_local_decl = binding.local_decls[local].clone();
-        let new_local = binding.local_decls.push(new_local_decl); 
+        let new_local = binding.local_decls.push(new_local_decl);
         new_local
-        
+    }
+    pub fn dominates_(&self, def_bb: &BasicBlock, bb: &BasicBlock) -> bool {
+        // 使用一个集合来追踪所有被 def_bb 支配的基本块
+        let mut visited = HashSet::new();
+
+        // 从 def_bb 出发，遍历其子树
+        let mut stack = self.dom_tree.get(def_bb).unwrap().clone();
+        while let Some(block) = stack.pop() {
+            if !visited.insert(block) {
+                continue;
+            }
+
+            // 如果当前块是 bb，说明 def_bb 支配了 bb
+            if block == *bb {
+                return true;
+            }
+
+            // 将所有子节点加入栈中，继续遍历
+            if let Some(children) = self.dom_tree.get(&block) {
+                stack.extend(children);
+            }
+        }
+
+        false
+    }
+    fn update_reachinf_def(&mut self, local: &Local, bb: &BasicBlock) {
+        let def_bb = self.local_defination_block[local];
+        let mut r = self.reaching_def[local];
+        while !(self.dominates_(&def_bb, bb) || r == None) {
+            r = self.reaching_def[&r.unwrap()];
+        }
+        if let Some(entry) = self.reaching_def.get_mut(local) {
+            *entry = r.clone();
+        }
     }
 }

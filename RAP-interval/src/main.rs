@@ -134,6 +134,7 @@ fn analyze_mir<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) {
     //不许存储body的可变引用
     let mut ssa: SSATransformer<'tcx> = SSATransformer::new(tcx, def_id);
     ssa.insert_phi_statment();
+    ssa.print_phi_mir();
     ssa.rename_variables();
     ssa.analyze();
     let mut cg: ConstraintGraph<'tcx, u32> = ConstraintGraph::new(tcx);
