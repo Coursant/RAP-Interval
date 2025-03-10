@@ -13,7 +13,7 @@ use rustc_middle::{
 };
 use rustc_span::sym::new;
 
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Write};
@@ -284,6 +284,38 @@ impl<'tcx> SSATransformer<'tcx> {
 
         dominance_frontier
     }
+    fn depth_first_search_preorder(
+        dom_tree: &HashMap<BasicBlock, Vec<BasicBlock>>,
+    ) -> Vec<BasicBlock> {
+        let mut visited: HashSet<BasicBlock> = HashSet::new();
+        let mut preorder = Vec::new();
+
+        fn dfs(
+            node: BasicBlock,
+            dom_tree: &HashMap<BasicBlock, Vec<BasicBlock>>,
+            visited: &mut HashSet<BasicBlock>,
+            preorder: &mut Vec<BasicBlock>,
+        ) {
+            if visited.insert(node) {
+                // 先加入前序结果
+                preorder.push(node);
+
+                // 遍历当前节点的子节点
+                if let Some(children) = dom_tree.get(&node) {
+                    for &child in children {
+                        dfs(child, dom_tree, visited, preorder);
+                    }
+                }
+            }
+        }
+
+        // 开始从支配树的任意一个根节点进行 DFS
+        if let Some(&start_node) = dom_tree.keys().next() {
+            dfs(start_node, dom_tree, &mut visited, &mut preorder);
+        }
+
+        preorder
+    }
     pub fn insert_phi_statment(&mut self) {
         // 初始化所有基本块的 phi 函数集合
         let mut phi_functions: HashMap<BasicBlock, HashSet<Local>> = HashMap::new();
@@ -318,7 +350,6 @@ impl<'tcx> SSATransformer<'tcx> {
                 }
             }
         }
-
         for (block, vars) in phi_functions {
             for var in vars {
                 let decl = self.body.borrow().local_decls[var].clone();
@@ -342,9 +373,12 @@ impl<'tcx> SSATransformer<'tcx> {
                 };
 
                 // 插入到基本块的开头
-                self.body.borrow_mut().basic_blocks_mut()[block]
-                    .statements
-                    .insert(0, phi_stmt);
+                // let mut binding = self.body.borrow_mut();
+
+                // binding.basic_blocks_mut()[block]
+                //     .statements
+                //     .insert(0, phi_stmt);
+                // drop(binding);
             }
         }
     }
@@ -390,7 +424,7 @@ impl<'tcx> SSATransformer<'tcx> {
     pub fn rename_variables(&mut self) {
         // 初始化每个变量的 reachingDef
         for local in self.body.borrow().local_decls.indices() {
-            self.reaching_def.insert(local, Some(local));
+            self.reaching_def.insert(local, None);
         }
         self.local_defination_block = Self::map_locals_to_definition_block(&self.body.borrow());
         print!("%%%%{:?}%%%%", self.reaching_def);
@@ -400,7 +434,7 @@ impl<'tcx> SSATransformer<'tcx> {
         );
 
         // 深度优先先序遍历支配树
-        for bb in Self::depth_first_search_postorder(&self.dom_tree) {
+        for bb in Self::depth_first_search_preorder(&self.dom_tree) {
             self.process_basic_block(bb);
         }
     }
@@ -421,7 +455,7 @@ impl<'tcx> SSATransformer<'tcx> {
             .successors()
             .collect();
         for succ_bb in successors {
-            self.process_phi_functions(succ_bb);
+            // self.process_phi_functions(succ_bb);
         }
     }
 
@@ -485,20 +519,60 @@ impl<'tcx> SSATransformer<'tcx> {
     //     new_local
     // }
     pub fn rename_statement(&mut self, i: usize, bb: BasicBlock) {
-        for statement in self.body.clone().borrow_mut().basic_blocks_mut()[bb]
+        // match self.body.try_borrow_mut() {
+        //     Ok(mut borrow2) => {
+        //         // *borrow2 += 1;
+        //         // println!("rename_statement Borrow succeeded: {:?}", borrow2);
+        //         println!("rename_statement Borrow succeeded: ");
+        //     }
+        //     Err(_) => {
+        //         println!("rename_statement Borrow failed: already mutably borrowed!");
+        //     }
+        // }
+        // for statement in self.body.clone().borrow_mut().basic_blocks_mut()[bb]
+        //     .statements
+        //     .iter_mut()
+        for statement in self.body.clone().borrow().basic_blocks[bb]
             .statements
-            .iter_mut()
+            .iter()
         {
-            // let rc_stat = Rc::new(RefCell::new(statement));
+            // match self.body.try_borrow_mut() {
+            //     Ok(mut borrow2) => {
+            //         // *borrow2 += 1;
+            //         // println!("rename_statement Borrow succeeded: {:?}", borrow2);
+            //         println!("rename_statement Borrow succeeded: ");
+            //     }
+            //     Err(_) => {
+            //         println!("rename_statement Borrow failed: already mutably borrowed!");
+            //     }
+            // }
+            // // let rc_stat = Rc::new(RefCell::new(statement));
             let is_phi = Self::is_phi_statement(statement);
-            match &mut statement.kind {
+            match &statement.kind {
                 // 1. 赋值语句: 变量使用（右值），变量定义（左值）
                 StatementKind::Assign(box (place, rvalue)) => {
                     {
                         if !is_phi {
-                            // self.update_reachinf_def(&place.local, &bb);
-                            self.replace_rvalue(rvalue);
+                            // match self.body.try_borrow() {
+                            //     Ok(mut borrow2) => {
+                            //         // *borrow2 += 1;
+                            //         // println!("rename_statement Borrow succeeded: {:?}", borrow2);
+                            //         println!("rename_statement Borrow succeeded: ");
+                            //     }
+                            //     Err(_) => {
+                            //         println!(
+                            //             "rename_statement Borrow failed: already mutably borrowed!"
+                            //         );
+                            //     }
+                            // }
+
+                            self.update_reachinf_def(&place.local, &bb);
+                            // self.replace_rvalue(rvalue);
+                            self.rename_def(RefCell::new(*place));
                         } else {
+                            self.update_reachinf_def(&place.local, &bb);
+                            self.rename_def(RefCell::new(*place));
+
                             //每个定义生成的变量
                             // self.replace_place(place,rc_stat.clone());
                         }
@@ -578,20 +652,56 @@ impl<'tcx> SSATransformer<'tcx> {
             self.replace_place(&mut place);
         }
     }
-
     fn replace_place(&mut self, place: &mut Place<'tcx>) {
         if let Some(reaching_local) = self.reaching_def.get(&place.local) {
-            let local = reaching_local.unwrap().clone();
-            place.local = local;
-            //  *place = Place::from(local);
+            if let Some(local) = reaching_local {
+                place.local = *local;
+            }
         }
     }
 
-    fn rename_def(&mut self, place: &mut Place<'tcx>) {
-        if let Some(local) = place.as_local() {
-            // let new_local = self.create_fresh_variable(local);
-            // self.reaching_def.entry(local).or_default().push(new_local);
-            // *place = Place::from(new_local);
+    // fn rename_def(&mut self, place: UnsafeCell<&rustc_middle::mir::Place<'_>>) {
+
+    //     if let Some(local) = place.as_local() {
+    //         let new_local = self.create_fresh_variable(local);
+
+    //         // 获取 local 之前的值，并赋给 new_local
+    //         if let Some(&value) = self.reaching_def.get(&local) {
+    //             self.reaching_def.insert(new_local, value);
+    //         }
+
+    //         // 更新 local 的值为 new_local
+    //         self.reaching_def.insert(local, Some(new_local));
+
+    //         // 更新 place
+    //         // *place = Place::from(new_local);
+    //     }
+    // }
+    fn rename_def(&mut self, place: RefCell<Place<'_>>) {
+        match self.body.try_borrow() {
+            Ok(mut borrow2) => {
+                // *borrow2 += 1;
+                // println!("rename_statement Borrow succeeded: {:?}", borrow2);
+                println!("rename_def Borrow succeeded: ");
+            }
+            Err(_) => {
+                println!("rename_def Borrow failed: already mutably borrowed!");
+            }
+        }
+        let mut place_mut = place.borrow_mut(); // 获取可变借用
+        if let Some(local) = place_mut.as_local() {
+            let new_local = self.create_fresh_variable(local);
+
+            // 获取 local 之前的值，并赋给 new_local
+            if let Some(&value) = self.reaching_def.get(&local) {
+                self.reaching_def.insert(new_local, value);
+            }
+
+            // 更新 local 的值为 new_local
+            self.reaching_def.insert(local, Some(new_local));
+
+            // 更新 place
+            *place_mut = Place::from(new_local);
         }
     }
 
@@ -616,12 +726,22 @@ impl<'tcx> SSATransformer<'tcx> {
     }
 
     fn create_fresh_variable(&mut self, local: Local) -> Local {
+        println!("Reference count: {}", Rc::strong_count(&self.body));
+        match self.body.try_borrow_mut() {
+            Ok(mut borrow2) => {
+                // *borrow2 += 1;
+                println!("create_fresh_variable Borrow succeeded: {:?}", borrow2);
+            }
+            Err(_) => {
+                println!("create_fresh_variable Borrow failed: already mutably borrowed!");
+            }
+        }
         let mut binding = self.body.borrow_mut();
         let new_local_decl = binding.local_decls[local].clone();
         let new_local = binding.local_decls.push(new_local_decl);
         new_local
     }
-    pub fn dominates_(&self, def_bb: &BasicBlock, bb: &BasicBlock) -> bool {
+    pub fn dominates_(&self, def_bb: &BasicBlock, bb: &BasicBlock) -> bool { 
         // 使用一个集合来追踪所有被 def_bb 支配的基本块
         let mut visited = HashSet::new();
 
@@ -649,7 +769,10 @@ impl<'tcx> SSATransformer<'tcx> {
         let def_bb = self.local_defination_block[local];
         let mut r = self.reaching_def[local];
         while !(self.dominates_(&def_bb, bb) || r == None) {
+            print!("r1:{:?}", r);
+
             r = self.reaching_def[&r.unwrap()];
+            print!("r2:{:?}", r);
         }
         if let Some(entry) = self.reaching_def.get_mut(local) {
             *entry = r.clone();
